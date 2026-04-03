@@ -1,0 +1,31 @@
+# ============================================================
+# Evaluation config for StreamingHead
+# CLI args override these values, e.g.:
+#   python -m rom.eval --ckpt_path checkpoints/my_model.pt
+#   python -m rom.eval --config configs/my_eval.yaml
+# ============================================================
+
+# --- Model & Checkpoint ---
+model_name: "Qwen/Qwen3-8B"
+ckpt_path: "checkpoints/best.pt"
+compare_ckpt: null
+idx_layer: 32
+max_length: 8192
+
+# --- Test Data ---
+test_data: "data/test_data/gsm8k.test-Qwen3-8B.processed.jsonl"
+
+# --- Evaluation ---
+seed: 46
+force_recompute: false
+debug: false
+no_backtrack: false
+window_size: 1
+window_count: 1
+threshold: 0.5
+gpu_memory_utilization: 0.9
+
+# --- Output ---
+output_html: "debug.html"
+suffix: ""
+summarization_prompt: "\n</think>\n\n---\n\n### Final Answer\n\n$$\n\\boxed{"

@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Model & data artifacts
+*.pt
+*.pth
+*.bin
+*.arrow
+data/
+checkpoints/
+safety_cache/
+
+# Experiment outputs
+wandb/
+*.html
+*.log
+eval_results*/
+
+# Environment
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+*.swp

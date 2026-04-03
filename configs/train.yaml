@@ -1,0 +1,33 @@
+# ============================================================
+# Training config for StreamingHead
+# CLI args override these values, e.g.:
+#   python -m rom.train --lr 1e-4
+#   python -m rom.train --config configs/my_experiment.yaml
+# ============================================================
+
+# --- Model & Data ---
+model_name: "Qwen/Qwen3-8B"
+efficient_data: "data/train_efficient.jsonl"
+overthinking_data: "data/train_overthinking.jsonl"
+save_dir: "checkpoints"
+idx_layer: 32
+
+# --- Training ---
+batch_size: 8
+gradient_acc_steps: 4
+lr: 5.0e-5
+weight_decay: 0.1
+num_train_epochs: 20
+warmup_ratio: 0.1
+deterministic: false
+
+# --- Checkpoint ---
+resume_from_checkpoint: null
+max_build_samples: null
+
+# --- Wandb ---
+use_wandb: true
+no_wandb: false
+wandb_project: "rom"
+wandb_run_name: null
+wandb_log_artifacts: false
