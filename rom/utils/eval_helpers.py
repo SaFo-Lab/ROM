@@ -1,5 +1,5 @@
-"""Utility functions for evaluation: probability computation, sliding window
-detection, prompt preparation, metrics calculation, and logging."""
+"""Utility functions for evaluation: probability computation, prompt
+preparation, metrics calculation, and logging."""
 
 import os
 import json
@@ -16,7 +16,7 @@ from rom.env import set_seed
 
 
 def compute_probs(ckpt_path, test_dataset_dir, test_jsonl_filename, model_name, idx_layer,
-                  max_length, bf16=True, device=None, seed=42, cache_dir="Kelp-my/eval_cache", 
+                  max_length, bf16=True, device=None, seed=42, cache_dir="eval_cache",
                   cache_file=None, debug=False):
     """Compute probabilities for test data. Returns cache file path if successful, None otherwise."""
     set_seed(seed)
@@ -127,29 +127,6 @@ def compute_probs(ckpt_path, test_dataset_dir, test_jsonl_filename, model_name, 
     return cache_file
 
 
-def sliding_window(probs, window_size=1, window_count=1, threshold=0.5):
-    """Find the end index of the first window containing window_count overthinking tokens.
-    
-    Args:
-        probs: Array of probabilities
-        window_size: Size of the sliding window
-        window_count: Number of overthinking tokens needed in window
-        threshold: Probability threshold for overthinking (default 0.5)
-    
-    Returns:
-        cut_idx: End index of the window (exclusive), or None if not found
-    """
-    if len(probs) < window_size:
-        return None
-    
-    for i in range(len(probs) - window_size + 1):
-        window = probs[i:i + window_size]
-        ot_count = sum(1 for p in window if p > threshold)
-        if ot_count >= window_count:
-            return i + window_size
-    
-    return None
-
 
 def find_reasoning_length(token_ids, think_end_token):
     """Find the position of the last </think> token."""
@@ -207,89 +184,81 @@ def create_log_print(log_file):
     return log_print
 
 
-def prepare_prompts_for_checkpoint(test_data, tokenizer, device, 
-                                    max_prompt_len, summarization_prompt, log_print, 
-                                    use_backtrack=True, window_size=1, window_count=1, threshold=0.5):
+def prepare_prompts_for_checkpoint(test_data, tokenizer, device,
+                                    max_prompt_len, summarization_prompt, log_print,
+                                    use_backtrack=True, threshold=0.5):
     """Prepare generation prompts for a single checkpoint.
-    
+
     Args:
-        use_backtrack: If True, backtrack to newline and check for 'wait'. 
-                       If False, cut directly at first_ot_idx.
-        window_size: Size of sliding window for overthinking detection.
-        window_count: Number of overthinking tokens required in window.
+        use_backtrack: If True, backtrack to sentence boundary before cutting.
+                       If False, cut directly at first overthinking token.
     """
     generation_prompts = []
     prompt_indices = []
     all_metadata = []
-    
+
     for idx in tqdm(range(len(test_data)), desc="Preparing prompts"):
         item = test_data[idx]
         problem = item['problem']
         response = item.get('response', '')
         assistant_start = item['assistant_start']
-        
+
         # Use cached logits
         logits = torch.tensor(item['logits'], device=device)
-        
+
         # Tokenize full text
         messages = [{"role": "user", "content": problem}, {"role": "assistant", "content": response}]
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
         model_inputs = tokenizer([text], return_tensors="pt")
         full_token_ids = model_inputs.input_ids[0].tolist()
-        
+
         # Get probabilities
         probs = F.softmax(logits, dim=-1)[:, 1].cpu().float().numpy()  # P(class=1)
-        
-        # Find first OT token (for visualization and BASE cut)
+
+        # Find first overthinking token
         first_ot_idx = None
         for i, p in enumerate(probs):
             if p > threshold:
                 first_ot_idx = i
                 break
-        
-        # Determine cut position based on mode
-        cut_idx = None
-        if not use_backtrack:
-            # BASE: cut directly at first OT token (no sliding window)
-            cut_idx = first_ot_idx
-        else:
-            # COMPARE: use sliding window, then optionally backtrack
-            cut_idx = sliding_window(probs, window_size, window_count, threshold=threshold)
-            
-            # Apply backtracking from cut_idx
-            if cut_idx is not None:
-                response_token_ids = full_token_ids[assistant_start:]
-                backtracked_idx = None
-                for i in range(cut_idx - 1, -1, -1):
+
+        # Cut at first overthinking token
+        cut_idx = first_ot_idx
+
+        # Apply backtracking to sentence boundary if enabled
+        if use_backtrack and cut_idx is not None:
+            response_token_ids = full_token_ids[assistant_start:]
+            backtracked_idx = None
+            for i in range(cut_idx - 1, -1, -1):
+                if i < len(response_token_ids):
+                    token_text = tokenizer.decode([response_token_ids[i]], skip_special_tokens=False)
+                    if '\n' in token_text:
+                        backtracked_idx = i + 1  # Cut after the newline
+                        break
+
+            # If found a newline, check if we need to go back one more sentence
+            if backtracked_idx is not None and backtracked_idx > 0:
+                prev_dot_idx = None
+                for i in range(backtracked_idx - 1, -1, -1):
                     if i < len(response_token_ids):
                         token_text = tokenizer.decode([response_token_ids[i]], skip_special_tokens=False)
-                        if '\n' in token_text:
-                            backtracked_idx = i + 1  # Cut after the newline
+                        if '.' in token_text:
+                            prev_dot_idx = i + 1
                             break
-                
-                # If found a newline, check if we need to go back one more sentence
-                if backtracked_idx is not None and backtracked_idx > 0:
-                    prev_dot_idx = None
-                    for i in range(backtracked_idx - 1, -1, -1):
-                        if i < len(response_token_ids):
-                            token_text = tokenizer.decode([response_token_ids[i]], skip_special_tokens=False)
-                            if '.' in token_text:
-                                prev_dot_idx = i + 1
-                                break
-                    
+
+                if prev_dot_idx is not None:
+                    sentence_text = tokenizer.decode(response_token_ids[prev_dot_idx:backtracked_idx], skip_special_tokens=False)
+                else:
+                    sentence_text = tokenizer.decode(response_token_ids[:backtracked_idx], skip_special_tokens=False)
+
+                sentence_stripped = sentence_text.strip()
+                if sentence_stripped.lower().startswith('wait') or not sentence_stripped.endswith('.'):
                     if prev_dot_idx is not None:
-                        sentence_text = tokenizer.decode(response_token_ids[prev_dot_idx:backtracked_idx], skip_special_tokens=False)
-                    else:
-                        sentence_text = tokenizer.decode(response_token_ids[:backtracked_idx], skip_special_tokens=False)
-                    
-                    sentence_stripped = sentence_text.strip()
-                    if sentence_stripped.lower().startswith('wait') or not sentence_stripped.endswith('.'):
-                        if prev_dot_idx is not None:
-                            backtracked_idx = prev_dot_idx
-                
-                # Update cut_idx with backtracked position
-                if backtracked_idx is not None:
-                    cut_idx = backtracked_idx
+                        backtracked_idx = prev_dot_idx
+
+            # Update cut_idx with backtracked position
+            if backtracked_idx is not None:
+                cut_idx = backtracked_idx
         
         # Build prompt
         prompt_ids = None
@@ -335,36 +304,6 @@ def build_response_from_generation(metadata, outputs_map, tokenizer, summarizati
         return metadata['item'].get('response', '')
 
 
-def create_response_metadata(idx, cut_idx, prompt_ids, assistant_start, response):
-    """Create metadata dict for response building."""
-    return {
-        'idx': idx,
-        'cut_idx': cut_idx,
-        'prompt_ids': prompt_ids,
-        'assistant_start': assistant_start,
-        'item': {'response': response}
-    }
-
-
-def format_checkpoint_log(checkpoint_name, first_ot_idx, cut_idx, results, orig_results, expected_answer, reasoning_ratio, response_ratio):
-    """Format log section for a single checkpoint."""
-    lines = []
-    lines.append(f"\n--- {checkpoint_name} ---\n")
-    lines.append(f"First OT token: {first_ot_idx if first_ot_idx is not None else 'None'}\n")
-    lines.append(f"Cut at token: {cut_idx if cut_idx is not None else 'None'}\n")
-    lines.append(f"Our reasoning length: {results['reasoning_length']} tokens\n")
-    lines.append(f"Original reasoning length: {results['original_reasoning_length']} tokens\n")
-    lines.append(f"Reasoning length ratio: {reasoning_ratio:.3f}\n")
-    lines.append(f"Our response length: {results['response_length']} tokens\n")
-    lines.append(f"Original response length: {results['original_response_length']} tokens\n")
-    lines.append(f"Response length ratio: {response_ratio:.3f}\n")
-    lines.append(f"Expected answer: {expected_answer}\n")
-    lines.append(f"Extracted answer: {results['extracted_answer']}\n")
-    lines.append(f"Original answer: {orig_results['extracted_answer']}\n")
-    lines.append(f"Our method correct: {results['is_correct']}\n")
-    lines.append(f"Original correct: {orig_results['is_correct']}\n")
-    return ''.join(lines)
-
 
 def extract_basenames(test_data_path, ckpt_path):
     """Extract simplified basenames from paths for output filenames."""
@@ -380,27 +319,6 @@ def extract_basenames(test_data_path, ckpt_path):
     
     return test_dataset_dir, test_jsonl, test_data_basename, ckpt_basename
 
-
-def build_output_paths(output_dir, test_data_basename, ckpt_basename, seed, suffix_str, compare_ckpt_basename=None):
-    """Build output file paths for logs and visualizations."""
-    if compare_ckpt_basename:
-        # Comparison mode
-        log_filename = f"evaluation_results_{test_data_basename}_{compare_ckpt_basename}_vs_{ckpt_basename}_seed{seed}{suffix_str}.txt"
-        html_filename = f"visualization_{test_data_basename}_{compare_ckpt_basename}_vs_{ckpt_basename}_seed{seed}{suffix_str}.html"
-    else:
-        # Single evaluation mode
-        log_filename = f"evaluation_results_{test_data_basename}_{ckpt_basename}_seed{seed}{suffix_str}.txt"
-        html_filename = f"visualization_{test_data_basename}_{ckpt_basename}_seed{seed}{suffix_str}.html"
-    
-    return os.path.join(output_dir, log_filename), os.path.join(output_dir, html_filename)
-
-
-def calculate_checkpoint_stats(results, checkpoint_key_prefix):
-    """Calculate statistics for a checkpoint (base/compare/original)."""
-    correct_count = sum(1 for r in results if r.get(f'{checkpoint_key_prefix}_correct') is True)
-    avg_reasoning = np.mean([r[f'{checkpoint_key_prefix}_reasoning_length'] for r in results])
-    avg_response = np.mean([r[f'{checkpoint_key_prefix}_response_length'] for r in results])
-    return correct_count, avg_reasoning, avg_response
 
 
 def calculate_group_metrics(group):
@@ -461,60 +379,3 @@ def calculate_summary_metrics(grouped_results):
     }
 
 
-def write_comparison_summary(log_file, results, base_ckpt_basename, compare_ckpt_basename):
-    """Write comparison summary to log file."""
-    num_results = len(results)
-    
-    # Header
-    log_file.write("="*80 + "\n")
-    log_file.write("OVERALL COMPARISON SUMMARY\n")
-    log_file.write("="*80 + "\n")
-    log_file.write(f"Total samples: {num_results}\n")
-    log_file.write(f"Base checkpoint: {base_ckpt_basename}\n")
-    log_file.write(f"Compare checkpoint: {compare_ckpt_basename}\n\n")
-    
-    # Calculate stats
-    base_correct, base_avg_reasoning, base_avg_response = calculate_checkpoint_stats(results, 'base')
-    compare_correct, compare_avg_reasoning, compare_avg_response = calculate_checkpoint_stats(results, 'compare')
-    original_correct, original_avg_reasoning, original_avg_response = calculate_checkpoint_stats(results, 'original')
-    
-    base_reasoning_ratio = safe_ratio(base_avg_reasoning, original_avg_reasoning)
-    base_response_ratio = safe_ratio(base_avg_response, original_avg_response)
-    compare_reasoning_ratio = safe_ratio(compare_avg_reasoning, original_avg_reasoning)
-    compare_response_ratio = safe_ratio(compare_avg_response, original_avg_response)
-    
-    # Write BASE stats
-    log_file.write(f"--- BASE ({base_ckpt_basename}) ---\n")
-    log_file.write(f"Accuracy: {base_correct}/{num_results} = {base_correct/num_results*100:.2f}%\n")
-    log_file.write(f"Avg reasoning length: {base_avg_reasoning:.1f} tokens\n")
-    log_file.write(f"Avg response length: {base_avg_response:.1f} tokens\n")
-    log_file.write(f"Avg reasoning ratio: {base_reasoning_ratio:.3f}\n")
-    log_file.write(f"Avg response ratio: {base_response_ratio:.3f}\n\n")
-    
-    # Write COMPARE stats
-    log_file.write(f"--- COMPARE ({compare_ckpt_basename}) ---\n")
-    log_file.write(f"Accuracy: {compare_correct}/{num_results} = {compare_correct/num_results*100:.2f}%\n")
-    log_file.write(f"Avg reasoning length: {compare_avg_reasoning:.1f} tokens\n")
-    log_file.write(f"Avg response length: {compare_avg_response:.1f} tokens\n")
-    log_file.write(f"Avg reasoning ratio: {compare_reasoning_ratio:.3f}\n")
-    log_file.write(f"Avg response ratio: {compare_response_ratio:.3f}\n\n")
-    
-    # Write ORIGINAL stats
-    log_file.write(f"--- ORIGINAL ---\n")
-    log_file.write(f"Accuracy: {original_correct}/{num_results} = {original_correct/num_results*100:.2f}%\n")
-    log_file.write(f"Avg reasoning length: {original_avg_reasoning:.1f} tokens\n")
-    log_file.write(f"Avg response length: {original_avg_response:.1f} tokens\n\n")
-    
-    # Write DIFF stats
-    regression_count = sum(1 for r in results if r.get('base_correct') and not r.get('compare_correct'))
-    improvement_count = sum(1 for r in results if not r.get('base_correct') and r.get('compare_correct'))
-    
-    log_file.write(f"--- DIFF (COMPARE - BASE) ---\n")
-    log_file.write(f"Accuracy diff: {(compare_correct - base_correct):+d} samples ({(compare_correct - base_correct)/num_results*100:+.2f}%)\n")
-    log_file.write(f"Avg reasoning length diff: {compare_avg_reasoning - base_avg_reasoning:+.1f} tokens\n")
-    log_file.write(f"Avg response length diff: {compare_avg_response - base_avg_response:+.1f} tokens\n")
-    log_file.write(f"Avg reasoning ratio diff: {compare_reasoning_ratio - base_reasoning_ratio:+.3f}\n")
-    log_file.write(f"Avg response ratio diff: {compare_response_ratio - base_response_ratio:+.3f}\n")
-    log_file.write(f"Regressions (Base✓ → Compare✗): {regression_count}\n")
-    log_file.write(f"Improvements (Base✗ → Compare✓): {improvement_count}\n")
-    log_file.write("="*80 + "\n\n")

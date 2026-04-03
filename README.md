@@ -42,7 +42,7 @@ ROM/
 │   ├── env.py                  # Environment setup
 │   └── utils/
 │       ├── math.py             # Answer extraction & correctness checking
-│       └── eval_helpers.py     # Metrics, sliding window, probability computation
+│       └── eval_helpers.py     # Metrics, probability computation
 ├── configs/
 │   ├── train.yaml              # Training defaults
 │   └── eval.yaml               # Evaluation defaults
