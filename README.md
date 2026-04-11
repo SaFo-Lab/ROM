@@ -7,8 +7,8 @@
 <sup>1</sup>University of Wisconsin-Madison &nbsp; <sup>2</sup>Johns Hopkins University
 
 [![arXiv](https://img.shields.io/badge/arXiv-2603.22016-b31b1b.svg)](https://arxiv.org/abs/2603.22016)
-[![Project Page](https://img.shields.io/badge/Project-Page-blue)](https://xinyan-wang-stat.github.io/ROM/)
-[![Dataset](https://img.shields.io/badge/HuggingFace-Dataset-orange)](https://huggingface.co/datasets/xinyan-wang/ROM-LRM)
+[![Project Page](https://img.shields.io/badge/Project-Page-blue)](https://xinyan-wang-stat.github.io/ROM-LRM/)
+[![Dataset](https://img.shields.io/badge/HuggingFace-Dataset-orange)](https://huggingface.co/datasets/xinyan-wang/ROM)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 </div>
