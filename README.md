@@ -97,11 +97,14 @@ python -m rom.eval --ckpt_path checkpoints/my_model.pt --test_data data/test_dat
 If you find ROM useful, please cite our paper 📝 and give us a ⭐!
 
 ```bibtex
-@article{wang2025rom,
-  title={ROM: Real-time Overthinking Mitigation via Streaming Detection and Intervention},
-  author={Wang, Xinyan and Liu, Xiaogeng and Xiao, Chaowei},
-  journal={arXiv preprint arXiv:2603.22016},
-  year={2025}
+@misc{wang2026romrealtimeoverthinkingmitigation,
+      title={ROM: Real-time Overthinking Mitigation via Streaming Detection and Intervention}, 
+      author={Xinyan Wang and Xiaogeng Liu and Chaowei Xiao},
+      year={2026},
+      eprint={2603.22016},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2603.22016}, 
 }
 ```
 
